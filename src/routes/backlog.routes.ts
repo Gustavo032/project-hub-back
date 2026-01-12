@@ -22,7 +22,7 @@ backlogRoutes.get(
       `SELECT id, project_id, origin_type, suggestion_id, title, summary,
               stage, priority, progress_percent, created_at
        FROM backlog_items
-       WHERE project_id = $1
+       WHERE project_id = $1 AND is_active = true
        ORDER BY created_at DESC`,
       [projectId]
     );
@@ -224,46 +224,125 @@ backlogRoutes.patch(
   }
 );
 
-// DELETE task (developer/admin) - respeita stack
+
+/**
+ * DELETE /api/projects/:projectId/backlog/:backlogItemId
+ * Remove item do desenvolvimento (soft delete).
+ * - manual: só desativa
+ * - suggestion: desativa backlog + reabre sugestão e zera progresso
+ */
 backlogRoutes.delete(
-  "/projects/:projectId/backlog/:backlogItemId/tasks/:taskId",
+  "/projects/:projectId/backlog/:backlogItemId",
   authRequired,
   requireProjectMembership,
   requireRole(["developer", "admin"]),
   async (req, res) => {
-    const { projectId, backlogItemId, taskId } = req.params;
+    const { projectId, backlogItemId } = req.params;
     const userId = req.auth!.userId;
-    const role = req.auth!.role;
 
-    const tRes = await pool.query(
-      `SELECT ds.code as stack
-       FROM backlog_tasks t
-       JOIN developer_stacks ds ON ds.id = t.stack_id
-       WHERE t.project_id = $1 AND t.backlog_item_id = $2 AND t.id = $3`,
-      [projectId, backlogItemId, taskId]
-    );
-    const task = tRes.rows[0];
-    if (!task) return res.status(404).json({ error: "Task não encontrada" });
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-    if (role === "developer") {
-      const stacks = await getUserStacks(userId);
-      if (!stacks.includes(task.stack)) {
-        return res.status(403).json({ error: `Sem permissão para stack ${task.stack}` });
+      // 1) Carrega item (e trava)
+      const itemRes = await client.query(
+        `SELECT id, project_id, origin_type, suggestion_id, is_active
+         FROM backlog_items
+         WHERE id = $1 AND project_id = $2
+         FOR UPDATE`,
+        [backlogItemId, projectId]
+      );
+
+      const item = itemRes.rows[0];
+      if (!item) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Item de backlog não encontrado" });
       }
+
+      if (!item.is_active) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Item já foi removido do desenvolvimento" });
+      }
+
+      // 2) Soft delete do backlog item
+      await client.query(
+        `UPDATE backlog_items
+         SET is_active = false,
+             deleted_at = now(),
+             deleted_by_user_id = $1,
+             progress_percent = 0,
+             updated_at = now()
+         WHERE id = $2`,
+        [userId, backlogItemId]
+      );
+
+      // 3) Se veio de sugestão: reabrir sugestão + desvincular
+      if (item.origin_type === "suggestion" && item.suggestion_id) {
+        await client.query(
+          `UPDATE suggestions
+           SET status = 'open',
+               progress_percent = 0,
+               backlog_item_id = NULL,
+               locked_at = NULL,
+               updated_at = now()
+           WHERE id = $1 AND project_id = $2`,
+          [item.suggestion_id, projectId]
+        );
+      }
+
+      await client.query("COMMIT");
+      return res.json({ ok: true });
+    } catch (e: any) {
+      await client.query("ROLLBACK");
+      console.error("DELETE backlog item error:", e);
+      return res.status(400).json({ error: e.message || "Erro ao remover item" });
+    } finally {
+      client.release();
     }
-
-    await pool.query(
-      `DELETE FROM backlog_tasks
-       WHERE project_id = $1 AND backlog_item_id = $2 AND id = $3`,
-      [projectId, backlogItemId, taskId]
-    );
-
-    const progress = await recalcProgress(projectId, backlogItemId);
-
-    return res.json({
-      ok: true,
-      backlog_progress_percent: progress.backlogProgress,
-      suggestion_progress_percent: progress.suggestionProgress ?? undefined
-    });
   }
 );
+
+
+// DELETE task (developer/admin) - respeita stack
+// backlogRoutes.delete(
+//   "/projects/:projectId/backlog/:backlogItemId/tasks/:taskId",
+//   authRequired,
+//   requireProjectMembership,
+//   requireRole(["developer", "admin"]),
+//   async (req, res) => {
+//     const { projectId, backlogItemId, taskId } = req.params;
+//     const userId = req.auth!.userId;
+//     const role = req.auth!.role;
+
+//     const tRes = await pool.query(
+//       `SELECT ds.code as stack
+//        FROM backlog_tasks t
+//        JOIN developer_stacks ds ON ds.id = t.stack_id
+//        WHERE t.project_id = $1 AND t.backlog_item_id = $2 AND t.id = $3`,
+//       [projectId, backlogItemId, taskId]
+//     );
+//     const task = tRes.rows[0];
+//     if (!task) return res.status(404).json({ error: "Task não encontrada" });
+
+//     if (role === "developer") {
+//       const stacks = await getUserStacks(userId);
+//       if (!stacks.includes(task.stack)) {
+//         return res.status(403).json({ error: `Sem permissão para stack ${task.stack}` });
+//       }
+//     }
+
+//     await pool.query(
+//       `DELETE FROM backlog_tasks
+//        WHERE project_id = $1 AND backlog_item_id = $2 AND id = $3`,
+//       [projectId, backlogItemId, taskId]
+//     );
+
+//     const progress = await recalcProgress(projectId, backlogItemId);
+
+//     return res.json({
+//       ok: true,
+//       backlog_progress_percent: progress.backlogProgress,
+//       suggestion_progress_percent: progress.suggestionProgress ?? undefined
+//     });
+//   }
+// );

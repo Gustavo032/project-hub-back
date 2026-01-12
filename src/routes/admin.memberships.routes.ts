@@ -10,20 +10,20 @@ export const adminMembershipRoutes = Router();
  * GET /api/admin/projects
  * (para dialog de assignment listar TODOS os projetos)
  */
-adminMembershipRoutes.get(
-  "/admin/projects",
-  authRequired,
-  requireRole(["admin"]),
-  async (_req, res) => {
-    const { rows } = await pool.query(
-      `SELECT id, name, description, status, created_at
-       FROM projects
-       ORDER BY created_at DESC`
-    );
+// adminMembershipRoutes.get(
+//   "/admin/projects",
+//   authRequired,
+//   requireRole(["admin"]),
+//   async (_req, res) => {
+//     const { rows } = await pool.query(
+//       `SELECT id, name, description, status, created_at
+//        FROM projects
+//        ORDER BY created_at DESC`
+//     );
 
-    return res.json({ items: rows });
-  }
-);
+//     return res.json({ items: rows });
+//   }
+// );
 
 /**
  * GET /api/admin/projects/:projectId/members

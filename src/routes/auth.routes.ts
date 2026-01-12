@@ -14,8 +14,12 @@ authRoutes.post("/auth/login", async (req, res) => {
   }).parse(req.body);
 
   const user = await getUserByEmail(body.email);
-  if (!user) return res.status(401).json({ error: "Credenciais inválidas" });
+	if (!user) return res.status(401).json({ error: "Credenciais inválidas" });
 
+	if (user.is_active === false) {
+	return res.status(403).json({ error: "Usuário desativado" });
+	}
+  
   const ok = await bcrypt.compare(body.password, user.password_hash);
   if (!ok) return res.status(401).json({ error: "Credenciais inválidas" });
 
@@ -31,8 +35,16 @@ authRoutes.post("/auth/login", async (req, res) => {
   );
 
 
-  return res.json({
-    token,
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
-  });
+	return res.json({
+		token,
+		user: {
+			id: user.id,
+			name: user.name,
+			email: user.email,
+			role: user.role,
+			is_active: user.is_active,
+			deleted_at: user.deleted_at,
+		},
+	});
+
 });

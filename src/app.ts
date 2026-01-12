@@ -8,10 +8,10 @@ import { meRoutes } from "./routes/me.routes";
 import { projectsRoutes } from "./routes/projects.routes";
 import { suggestionsRoutes } from "./routes/suggestions.routes";
 import { backlogRoutes } from "./routes/backlog.routes";
-import { adminRoutes } from "./routes/admin.routes";
 import { errorHandler } from "./middleware/errorHandler";
 import { adminUsersRoutes } from "./routes/admin.users.routes";
 import { adminMembershipRoutes } from "./routes/admin.memberships.routes";
+import { adminProjectsRoutes } from "./routes/admin.projects.routes";
 
 export function createApp() {
   const app = express();
@@ -21,7 +21,7 @@ export function createApp() {
 	app.use(cors({
 	origin: [
 		'http://localhost:8080',
-		'https://controle.codematch.com.br',
+		env.CORS_ORIGIN
 	],
 	methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 	allowedHeaders: ['Content-Type', 'Authorization'],
@@ -44,9 +44,9 @@ export function createApp() {
   app.use("/api", projectsRoutes);
   app.use("/api", suggestionsRoutes);
   app.use("/api", backlogRoutes);
-  app.use("/api", adminRoutes);
 	app.use("/api", adminUsersRoutes);
 	app.use("/api", adminMembershipRoutes);
+	app.use("/api", adminProjectsRoutes);
 
   app.use(errorHandler);
 

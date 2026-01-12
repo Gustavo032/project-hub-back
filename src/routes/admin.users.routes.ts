@@ -74,7 +74,7 @@ adminUsersRoutes.get(
   requireRole(["admin"]),
   async (_req, res) => {
     const { rows } = await pool.query(
-      `SELECT id, name, email, role, created_at
+      `SELECT id, name, email, role, created_at, is_active, deleted_at
        FROM users
        ORDER BY created_at DESC`
     );
@@ -89,6 +89,8 @@ adminUsersRoutes.get(
       role: u.role,
       stacks: stacksMap.get(u.id) ?? [],
       created_at: u.created_at,
+	  is_active: u.is_active,
+		deleted_at: u.deleted_at,
     }));
 
     return res.json({ items });
@@ -106,7 +108,7 @@ adminUsersRoutes.get(
     const { userId } = req.params;
 
     const userRes = await pool.query(
-      `SELECT id, name, email, role, created_at
+      `SELECT id, name, email, role, created_at, is_active, deleted_at
        FROM users
        WHERE id = $1`,
       [userId]
@@ -211,72 +213,133 @@ adminUsersRoutes.patch(
   async (req, res) => {
     const { userId } = req.params;
 
-    const body = z.object({
-      name: z.string().min(1).max(120).optional(),
-      email: z.string().email().max(200).optional(),
-      role: RoleSchema.optional(),
-      password: z.string().min(6).max(200).optional(),
-      stacks: StackSchema.optional(),
-    }).refine((v) => Object.keys(v).length > 0, "Nada para atualizar").parse(req.body);
+    const BodySchema = z
+      .object({
+        name: z.string().min(2).optional(),
+        email: z.string().email().optional(),
+        role: z.enum(["user", "manager", "developer", "admin"]).optional(), // ✅ inclui manager
+        password: z.string().min(6).optional(),
+        stacks: StackSchema.optional(),
+      })
+      .refine((v) => Object.keys(v).length > 0, { message: "Nada para atualizar" });
 
-    const exists = await pool.query(`SELECT id, role FROM users WHERE id = $1`, [userId]);
-    if (exists.rows.length === 0) return res.status(404).json({ error: "Usuário não encontrado" });
-
-    const newHash = body.password ? await bcrypt.hash(body.password, 10) : null;
-
-    // update user
+    let body: z.infer<typeof BodySchema>;
     try {
-      const updRes = await pool.query(
-        `UPDATE users
-         SET name = COALESCE($1, name),
-             email = COALESCE($2, email),
-             role = COALESCE($3, role),
-             password_hash = COALESCE($4, password_hash),
-             updated_at = now()
-         WHERE id = $5
-         RETURNING id, name, email, role, created_at`,
-        [
-          body.name ?? null,
-          body.email ?? null,
-          body.role ?? null,
-          newHash,
-          userId,
-        ]
-      );
+      body = BodySchema.parse(req.body);
+    } catch (e: any) {
+      return res.status(400).json({ error: e.errors?.[0]?.message || "Payload inválido" });
+    }
 
-      const user = updRes.rows[0];
+    // valida usuário existe
+    const exists = await pool.query(`SELECT id FROM users WHERE id = $1`, [userId]);
+    if (exists.rowCount === 0) return res.status(404).json({ error: "Usuário não encontrado" });
 
-      // stacks
-      const role = user.role as string;
-      const stacks = body.stacks ?? null;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-      if (stacks) {
-        const finalStacks = (role === "developer" || role === "admin") ? stacks : [];
-        await setUserStacks(userId, finalStacks);
-      } else if (role !== "developer" && role !== "admin") {
-        // se virou user/manager e não mandou stacks, zera por segurança
-        await pool.query(`DELETE FROM user_developer_stacks WHERE user_id = $1`, [userId]);
+      // 🔐 senha (opcional) -> coluna CERTA: password_hash
+      if (body.password) {
+        const hash = await bcrypt.hash(body.password, 10);
+        await client.query(
+          `UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`,
+          [hash, userId]
+        );
       }
 
-      // retorna com stacks
-      const stacksMap = await getStacksForUsers([userId]);
+      // 👤 dados básicos (name/email/role)
+      if (body.name || body.email || body.role) {
+        const fields: string[] = [];
+        const values: any[] = [];
+        let idx = 1;
+
+        if (body.name) {
+          fields.push(`name = $${idx++}`);
+          values.push(body.name);
+        }
+        if (body.email) {
+          fields.push(`email = $${idx++}`);
+          values.push(body.email);
+        }
+        if (body.role) {
+          fields.push(`role = $${idx++}`);
+          values.push(body.role);
+        }
+
+        values.push(userId);
+
+        await client.query(
+          `UPDATE users SET ${fields.join(", ")}, updated_at = now() WHERE id = $${idx}`,
+          values
+        );
+      }
+
+      // 🧩 stacks (somente se veio no payload)
+      // regra: stacks só fazem sentido para developer/admin; caso role vire user/manager => limpa stacks
+      const roleRes = await client.query(`SELECT role FROM users WHERE id = $1`, [userId]);
+      const currentRole = roleRes.rows[0].role as string;
+
+      if (body.stacks !== undefined) {
+        const finalStacks = (currentRole === "developer" || currentRole === "admin") ? body.stacks : [];
+
+        // limpa relação correta
+        await client.query(`DELETE FROM user_developer_stacks WHERE user_id = $1`, [userId]);
+
+        for (const code of finalStacks) {
+          const stackRes = await client.query(
+            `SELECT id FROM developer_stacks WHERE code = $1`,
+            [code]
+          );
+          if (stackRes.rowCount === 0) throw new Error(`Stack inválida: ${code}`);
+
+          await client.query(
+            `INSERT INTO user_developer_stacks (user_id, stack_id) VALUES ($1, $2)`,
+            [userId, stackRes.rows[0].id]
+          );
+        }
+      } else if (currentRole !== "developer" && currentRole !== "admin") {
+        // se não mandou stacks mas virou user/manager, garante limpeza
+        await client.query(`DELETE FROM user_developer_stacks WHERE user_id = $1`, [userId]);
+      }
+
+      await client.query("COMMIT");
+
+      // ✅ retorna o USER atualizado (o front precisa disso)
+      const userRes = await pool.query(
+        `SELECT id, name, email, role, created_at FROM users WHERE id = $1`,
+        [userId]
+      );
+
+      const stacksRes = await pool.query(
+        `SELECT ds.code
+         FROM user_developer_stacks uds
+         JOIN developer_stacks ds ON ds.id = uds.stack_id
+         WHERE uds.user_id = $1
+         ORDER BY ds.code`,
+        [userId]
+      );
 
       return res.json({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        stacks: stacksMap.get(userId) ?? [],
-        created_at: user.created_at,
+        id: userRes.rows[0].id,
+        name: userRes.rows[0].name,
+        email: userRes.rows[0].email,
+        role: userRes.rows[0].role,
+        stacks: stacksRes.rows.map((r) => r.code),
+        created_at: userRes.rows[0].created_at,
       });
     } catch (e: any) {
+      await client.query("ROLLBACK");
       if (String(e?.code) === "23505") {
         return res.status(409).json({ error: "E-mail já cadastrado" });
       }
-      throw e;
+      console.error("PATCH /admin/users error:", e);
+      return res.status(400).json({ error: e.message || "Erro ao atualizar usuário" });
+    } finally {
+      client.release();
     }
   }
 );
+
 
 /**
  * DELETE /api/admin/users/:userId
@@ -288,9 +351,25 @@ adminUsersRoutes.delete(
   requireRole(["admin"]),
   async (req, res) => {
     const { userId } = req.params;
+    const adminId = req.auth!.userId;
 
-    const delRes = await pool.query(`DELETE FROM users WHERE id = $1`, [userId]);
-    if (delRes.rowCount === 0) return res.status(404).json({ error: "Usuário não encontrado" });
+    // opcional: impedir admin de se auto-desativar
+    if (userId === adminId) {
+      return res.status(400).json({ error: "Você não pode remover seu próprio usuário" });
+    }
+
+    const upd = await pool.query(
+      `UPDATE users
+       SET is_active = false,
+           deleted_at = now(),
+           deleted_by_user_id = $1,
+           updated_at = now()
+       WHERE id = $2 AND is_active = true
+       RETURNING id`,
+      [adminId, userId]
+    );
+
+    if (upd.rowCount === 0) return res.status(404).json({ error: "Usuário não encontrado" });
 
     return res.json({ ok: true });
   }

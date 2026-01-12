@@ -11,11 +11,14 @@ meRoutes.get("/me", authRequired, async (req, res) => {
 
   const stacks = await getUserStacks(userId);
 
-  return res.json({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    stacks,
-  });
+	return res.json({
+		id: user.id,
+		name: user.name,
+		email: user.email,
+		role: user.role,
+		stacks,
+		is_active: user.is_active,
+		deleted_at: user.deleted_at,
+	});
+
 });

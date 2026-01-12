@@ -9,8 +9,13 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash text NOT NULL,
   role text NOT NULL CHECK (role IN ('user','manager','developer','admin')),
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  is_active boolean NOT NULL DEFAULT true,
+  deleted_at timestamptz NULL,
+  deleted_by_user_id uuid NULL REFERENCES users(id) ON DELETE RESTRICT
 );
+
+CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
 
 -- Developer stacks catalog
 CREATE TABLE IF NOT EXISTS developer_stacks (
@@ -42,8 +47,14 @@ CREATE TABLE IF NOT EXISTS projects (
   status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
   created_by_user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  is_active boolean NOT NULL DEFAULT true,
+  deleted_at timestamptz NULL,
+  deleted_by_user_id uuid NULL REFERENCES users(id) ON DELETE RESTRICT
 );
+
+CREATE INDEX IF NOT EXISTS idx_projects_is_active ON projects(is_active);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 
 -- Memberships
 CREATE TABLE IF NOT EXISTS project_members (
@@ -84,7 +95,10 @@ CREATE TABLE IF NOT EXISTS backlog_items (
   progress_percent int NOT NULL DEFAULT 0 CHECK (progress_percent BETWEEN 0 AND 100),
   created_by_user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  is_active boolean NOT NULL DEFAULT true,
+  deleted_at timestamptz NULL,
+  deleted_by_user_id uuid NULL REFERENCES users(id) ON DELETE RESTRICT
 );
 
 -- 1:1 suggestion -> backlog per project
