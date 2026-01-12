@@ -17,8 +17,17 @@ export function createApp() {
   const app = express();
 
   app.use(helmet());
-  app.use(cors({ origin: env.CORS_ORIGIN, credentials: false }));
-  app.use(express.json({ limit: "1mb" }));
+//   app.use(cors({ origin: env.CORS_ORIGIN, credentials: false }));
+	app.use(cors({
+	origin: [
+		'http://localhost:8080',
+		'https://controle.codematch.com.br',
+	],
+	methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+	allowedHeaders: ['Content-Type', 'Authorization'],
+	}));
+	
+	app.use(express.json({ limit: "1mb" }));
 	app.set('trust proxy', 1);
 
   app.use(rateLimit({
