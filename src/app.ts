@@ -19,6 +19,7 @@ export function createApp() {
   app.use(helmet());
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: false }));
   app.use(express.json({ limit: "1mb" }));
+	app.set('trust proxy', 1);
 
   app.use(rateLimit({
     windowMs: env.RATE_LIMIT_WINDOW_MS,
