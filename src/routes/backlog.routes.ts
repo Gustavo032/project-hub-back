@@ -304,45 +304,45 @@ backlogRoutes.delete(
 
 
 // DELETE task (developer/admin) - respeita stack
-// backlogRoutes.delete(
-//   "/projects/:projectId/backlog/:backlogItemId/tasks/:taskId",
-//   authRequired,
-//   requireProjectMembership,
-//   requireRole(["developer", "admin"]),
-//   async (req, res) => {
-//     const { projectId, backlogItemId, taskId } = req.params;
-//     const userId = req.auth!.userId;
-//     const role = req.auth!.role;
+backlogRoutes.delete(
+  "/projects/:projectId/backlog/:backlogItemId/tasks/:taskId",
+  authRequired,
+  requireProjectMembership,
+  requireRole(["developer", "admin"]),
+  async (req, res) => {
+    const { projectId, backlogItemId, taskId } = req.params;
+    const userId = req.auth!.userId;
+    const role = req.auth!.role;
 
-//     const tRes = await pool.query(
-//       `SELECT ds.code as stack
-//        FROM backlog_tasks t
-//        JOIN developer_stacks ds ON ds.id = t.stack_id
-//        WHERE t.project_id = $1 AND t.backlog_item_id = $2 AND t.id = $3`,
-//       [projectId, backlogItemId, taskId]
-//     );
-//     const task = tRes.rows[0];
-//     if (!task) return res.status(404).json({ error: "Task não encontrada" });
+    const tRes = await pool.query(
+      `SELECT ds.code as stack
+       FROM backlog_tasks t
+       JOIN developer_stacks ds ON ds.id = t.stack_id
+       WHERE t.project_id = $1 AND t.backlog_item_id = $2 AND t.id = $3`,
+      [projectId, backlogItemId, taskId]
+    );
+    const task = tRes.rows[0];
+    if (!task) return res.status(404).json({ error: "Task não encontrada" });
 
-//     if (role === "developer") {
-//       const stacks = await getUserStacks(userId);
-//       if (!stacks.includes(task.stack)) {
-//         return res.status(403).json({ error: `Sem permissão para stack ${task.stack}` });
-//       }
-//     }
+    if (role === "developer") {
+      const stacks = await getUserStacks(userId);
+      if (!stacks.includes(task.stack)) {
+        return res.status(403).json({ error: `Sem permissão para stack ${task.stack}` });
+      }
+    }
 
-//     await pool.query(
-//       `DELETE FROM backlog_tasks
-//        WHERE project_id = $1 AND backlog_item_id = $2 AND id = $3`,
-//       [projectId, backlogItemId, taskId]
-//     );
+    await pool.query(
+      `DELETE FROM backlog_tasks
+       WHERE project_id = $1 AND backlog_item_id = $2 AND id = $3`,
+      [projectId, backlogItemId, taskId]
+    );
 
-//     const progress = await recalcProgress(projectId, backlogItemId);
+    const progress = await recalcProgress(projectId, backlogItemId);
 
-//     return res.json({
-//       ok: true,
-//       backlog_progress_percent: progress.backlogProgress,
-//       suggestion_progress_percent: progress.suggestionProgress ?? undefined
-//     });
-//   }
-// );
+    return res.json({
+      ok: true,
+      backlog_progress_percent: progress.backlogProgress,
+      suggestion_progress_percent: progress.suggestionProgress ?? undefined
+    });
+  }
+);
